@@ -25,13 +25,6 @@ type Entry struct {
 	// the deepcopied value from this resource as the base structure (and
 	// providing values for .Spec fields and k8s metadata)
 	DecodeCtyCallback CtyDecodeFunc
-	// ResourceDiffIniter is a callback function that creates a ResourceDiff
-	// for a pair of managed.Resource objects. This type uses generated
-	// callbacks under the hood to:
-	// - determine if the provider's State needs to be synced locally
-	// - determine if the k8s resource Spec needs to be synced to the provider
-	// - create a merged representation of the two (eg update local with remote)
-	ResourceDiffIniter ResourceDiffIniter
 	// SchemeBuilder is used to register the controller for this type with the
 	// controller runtime. StartTerraformManager (in pkg/controller) iterates
 	// through all the registration entries and performs the bindings.
@@ -47,6 +40,10 @@ type Entry struct {
 	// YamlEncodeCallback is the complement to UnmarshalResourceCallback, taking
 	// a resource.Managed and producing the []byte representation.
 	YamlEncodeCallback YAMLEncodeFunc
+	// ResourceMerger can update the local kubernetes object with attributes
+	// from the cloud provider, late-initializing Spec fields, copying over Status
+	// fields and annotations.
+	ResourceMerger ResourceMerger
 }
 
 type ProviderEntry struct {

@@ -30,12 +30,10 @@ func Delete(p *client.Provider, r *registry.Registry, res resource.Managed) erro
 		return err
 	}
 
-	// TODO: research how/if the major providers are using Config
-	// same goes for the private state blobs that are shuffled around
 	req := providers.ApplyResourceChangeRequest{
 		TypeName:   tfName,
 		PriorState: encoded,
-		// TODO: For the purposes of Create, I am assuming that it's fine for
+		// TODO: For the purposes of Delete, I am assuming that it's fine for
 		// Config and PlannedState to be the same
 		Config:       cty.NullVal(s.Block.ImpliedType()),
 		PlannedState: cty.NullVal(s.Block.ImpliedType()),

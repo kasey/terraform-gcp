@@ -20,42 +20,10 @@ type CtyEncodeFunc func(xpresource.Managed, *providers.Schema) (cty.Value, error
 type CtyDecodeFunc func(xpresource.Managed, cty.Value, *providers.Schema) (xpresource.Managed, error)
 type YAMLEncodeFunc func(xpresource.Managed) ([]byte, error)
 type ReconcilerConfigurerFunc func(ctrl.Manager, logging.Logger, *Registry, *client.ProviderPool) error
-type ResourceDiffIniter func(kubeResource xpresource.Managed, providerResource xpresource.Managed) (ResourceDiff, error)
 type PoolInitializer func(kube *kubeclient.Client)
 
-type ResourceDiff struct {
-	KubeResource            xpresource.Managed
-	ProviderResource        xpresource.Managed
-	ForProviderDiffCallback func(xpresource.Managed, xpresource.Managed) []string
-	AtProviderDiffCallback  func(xpresource.Managed, xpresource.Managed) []string
-	MergeFunc               func(xpresource.Managed, xpresource.Managed) (xpresource.Managed, error)
-}
-
-func (rd *ResourceDiff) DifferentAtProvider() bool {
-	if len(rd.AtProviderDiffCallback(rd.KubeResource, rd.ProviderResource)) > 0 {
-		return true
-	}
-	return false
-}
-
-func (rd *ResourceDiff) DifferentForProvider() bool {
-	if len(rd.ForProviderDiffCallback(rd.KubeResource, rd.ProviderResource)) > 0 {
-		return true
-	}
-	return false
-}
-
-func (rd *ResourceDiff) Merged() (xpresource.Managed, error) {
-	return rd.MergeFunc(rd.KubeResource, rd.ProviderResource)
-}
-
-type ResourceDiffer interface {
-	DifferentAtProvider() bool
-	DifferentForProvider() bool
-	Merged() (xpresource.Managed, error)
-}
-
 type Registry struct {
+	resourceMergerMap          map[k8schema.GroupVersionKind]ResourceMerger
 	resourceRepresenterMap     map[k8schema.GroupVersionKind]ResourceUnmarshalFunc
 	ctyEncodeFuncMap           map[k8schema.GroupVersionKind]CtyEncodeFunc
 	ctyDecodeFuncMap           map[k8schema.GroupVersionKind]CtyDecodeFunc
@@ -65,12 +33,12 @@ type Registry struct {
 	reconcilerConfigurerMap    map[k8schema.GroupVersionKind]ReconcilerConfigurerFunc
 	schemaBuilderMap           map[k8schema.GroupVersionKind]*scheme.Builder
 	externalClientCallbacksMap map[k8schema.GroupVersionKind]*managed.ExternalClientFns
-	resourceDiffIniters        map[k8schema.GroupVersionKind]ResourceDiffIniter
 	provider                   *ProviderEntry
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
+		resourceMergerMap:          make(map[k8schema.GroupVersionKind]ResourceMerger),
 		resourceRepresenterMap:     make(map[k8schema.GroupVersionKind]ResourceUnmarshalFunc),
 		ctyEncodeFuncMap:           make(map[k8schema.GroupVersionKind]CtyEncodeFunc),
 		ctyDecodeFuncMap:           make(map[k8schema.GroupVersionKind]CtyDecodeFunc),
@@ -80,7 +48,6 @@ func NewRegistry() *Registry {
 		reconcilerConfigurerMap:    make(map[k8schema.GroupVersionKind]ReconcilerConfigurerFunc),
 		schemaBuilderMap:           make(map[k8schema.GroupVersionKind]*scheme.Builder),
 		externalClientCallbacksMap: make(map[k8schema.GroupVersionKind]*managed.ExternalClientFns),
-		resourceDiffIniters:        make(map[k8schema.GroupVersionKind]ResourceDiffIniter),
 	}
 }
 
@@ -88,14 +55,14 @@ func (r *Registry) RegisterProvider(entry *ProviderEntry) {
 	r.provider = entry
 }
 
-func (r *Registry) RegisterResourceDiffIniter(gvk k8schema.GroupVersionKind, di ResourceDiffIniter) {
+func (r *Registry) RegisterResourceMerger(gvk k8schema.GroupVersionKind, rm ResourceMerger) {
 	if gvk.String() == "" {
-		panic("RegisterResourceDiffer called with uninitialized GroupVersionKind")
+		panic("RegisterResourceMerger called with uninitialized GroupVersionKind")
 	}
-	if di == nil {
-		panic(fmt.Sprintf("Cannot initialize, RegisterResourceDiffer called with nil value for gvk=%s", gvk.String()))
+	if rm == nil {
+		panic(fmt.Sprintf("Cannot initialize, RegisterResourceMerger called with nil value for gvk=%s", gvk.String()))
 	}
-	r.resourceDiffIniters[gvk] = di
+	r.resourceMergerMap[gvk] = rm
 }
 
 func (r *Registry) RegisterExternalClientCallbacks(gvk k8schema.GroupVersionKind, cbfns *managed.ExternalClientFns) {
@@ -243,12 +210,12 @@ func (r *Registry) GetExternalClientCallbacksForGVK(gvk k8schema.GroupVersionKin
 	return cbfns, nil
 }
 
-func (r *Registry) GetResourceDiffIniter(gvk k8schema.GroupVersionKind) (ResourceDiffIniter, error) {
-	di, ok := r.resourceDiffIniters[gvk]
+func (r *Registry) GetResourceMerger(gvk k8schema.GroupVersionKind) (ResourceMerger, error) {
+	rm, ok := r.resourceMergerMap[gvk]
 	if !ok {
-		return nil, fmt.Errorf("Could not find ResourceDiffer for gvk=%s", gvk.String())
+		return nil, fmt.Errorf("Could not find ResourceMerger for gvk=%s", gvk.String())
 	}
-	return di, nil
+	return rm, nil
 }
 
 func (r *Registry) GetSchemeBuilders() []*scheme.Builder {
@@ -282,5 +249,5 @@ func (r *Registry) Register(entry *Entry) {
 	r.RegisterYAMLEncodeFunc(entry.GVK, entry.YamlEncodeCallback)
 	r.RegisterReconcilerConfigureFunc(entry.GVK, entry.ReconcilerConfigurer)
 	r.RegisterSchemeBuilder(entry.GVK, entry.SchemeBuilder)
-	r.RegisterResourceDiffIniter(entry.GVK, entry.ResourceDiffIniter)
+	r.RegisterResourceMerger(entry.GVK, entry.ResourceMerger)
 }
